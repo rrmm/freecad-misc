@@ -345,13 +345,13 @@ class ParameterDialog(QWidget):
 
 try:
     sketch = ActiveSketch
+    pd = ParameterDialog(sketch)
+    pd.show()
 except:
     print("Active sketch not found.  Canceling.")
 # end try
 
 
-pd = ParameterDialog(sketch)
-pd.show()
 
 
 

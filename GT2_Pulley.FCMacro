@@ -1,0 +1,360 @@
+
+#
+# 2022 (C) RM
+# GT2_Pulley FreeCAD macro 
+#
+# Creates the profile of a 2mm GT2 belt pulley in the currently open
+#   sketch.  The number of teeth is selected in the GUI panel.
+#
+# Profile details taken from the published MISUMI profile and contained 
+#   at the beginning of the GT2 class declaration.
+#
+# Output verified against McMaster STEP of GT2 pulley as well as 
+#   hand drawn profile.  Seems to work, no guarantees.
+#
+
+import math
+
+
+def vlen(v):
+    return math.sqrt(v[0]*v[0] + v[1]*v[1])
+# end
+
+# uses the standard setup of the problem which only considers dist b/w
+#      two circles offset on the x axis
+# R is the radius of the circle at the origin
+# r is the radius of the offset circle
+#
+# if circles don't intersect, returns (nan, nan)
+# if circles are co-incident (d==0) returns (nan,nan)
+# solution is symmetrical around the x-axis (+/- y)
+def intersectStandardCircles(d, r, R):
+    if (d==0):
+        return (math.nan,math.nan)
+    # end 
+    RR = R*R
+    rr = r*r
+    dd = d*d
+    x = (dd - rr + RR)/(2*d)
+    root = 4*dd*RR-(dd - rr + RR)**2
+    if (root < 0):
+        return (math.nan,math.nan)
+    # end if
+    y = (.5/d)*math.sqrt(root)
+    return (x,y)
+# end def
+
+class GT2:
+    pitch = 2.0          # 2mm
+    PLD = .254           # pitch line diameter 
+    height = 1.38        # overall height of belt profile
+    toothHeight = .750   
+    b = .400             # constants from the profile
+    R1 = .150
+    R2 = 1
+    R3 = .555
+
+    def calcCircumference(self, nTeeth):
+        return self.pitch*nTeeth
+    # end def
+
+    def calcPitchDiameter(self, nTeeth):
+        return self.calcCircumference(nTeeth)/math.pi
+    # end def
+
+    def calcOuterDiameter(self, nTeeth):
+        return self.calcPitchDiameter(nTeeth) - 2*self.PLD
+    # end def
+
+    def calcInnerDiameter(self, nTeeth):
+        return self.calcOuterDiameter(nTeeth) - 2*self.toothHeight
+    # end def
+
+
+    def calcAngleIncrement(self, nTeeth):
+        return 2*math.pi/nTeeth
+    # end def
+    
+    def calcAngle(self, nTeeth, tooth):
+        angle_increment = self.calcAngleIncrement(nTeeth)
+        polar_angle = tooth*angle_increment - angle_increment/2.0
+        return polar_angle
+    # end def
+    
+    # returns the point at the top of the profile for this tooth
+    def calcPointInnerDiameter(self, nTeeth, tooth):
+        polar_angle = self.calcAngle(nTeeth, tooth)
+        polar_length = self.calcInnerDiameter(nTeeth)/2.0
+
+        return (polar_length*math.cos(polar_angle),
+                polar_length*math.sin(polar_angle))
+    # end def
+
+    def calcR1Center(self, nTeeth, tooth, side):
+        # R1 must be tangent inside a circle at the orgin
+        # so it's center must be on the slightly smaller circle of radius 
+        R = self.calcOuterDiameter(nTeeth)/2.0 - self.R1
+
+        # R1 must also be tangent (on the outside)
+        # to the circle R2 which puts its center on the circle centered at
+        # 
+        r2x,r2y = self.calcR2Center(nTeeth, tooth, side)
+        d = vlen((r2x,r2y))
+        radius = self.R2 + self.R1
+
+        (intersect_x, intersect_y) = intersectStandardCircles(d, radius, R)
+
+        # now we have to translate to our actual coordinate system
+        # NB: the x coordinate is parallel to the polar angle
+        # to >>> R2 <<< **not** the usual R3
+        polar_angle = math.atan2(r2y,r2x)
+
+
+        offset_x = intersect_y*math.sin(polar_angle)
+        offset_y = -intersect_y*math.cos(polar_angle)            
+        # we need to switch sides from side=0 to side=1
+        if (side == 1):
+            offset_x,offset_y = -offset_x, -offset_y
+        # end if
+        (result_x, result_y) = (intersect_x*math.cos(polar_angle) +
+                                offset_x,
+                                intersect_x*math.sin(polar_angle) +
+                                offset_y)
+        return result_x, result_y
+    # end def
+
+    # R2 is the side circles tangent on the profile
+    # there is a left and a right one, select by side=0 and 1
+    def calcR2Center(self, nTeeth, tooth, side):
+        polar_angle = self.calcAngle(nTeeth, tooth)
+        polar_length = self.calcInnerDiameter(nTeeth)/2.0 + self.toothHeight
+
+
+        # we assume this remains square and doesn't deform significantly
+        # we need to offset self.b perpendicular from either side of
+        # this point
+        x,y= (polar_length*math.cos(polar_angle),
+              polar_length*math.sin(polar_angle))
+
+        # calc a unit perpendicular vector from the line (0,0) - (x,y)
+        px,py = (-y/polar_length,x/polar_length)
+
+        if (side):
+            alpha = -self.b
+        else:
+            alpha = self.b
+        # end if
+
+        return (x + alpha*px, y + alpha*py)
+    # end def
+
+    
+    # R3 defines the topmost part of the tooth profile 
+    # assumes origin at 0,0
+    def calcR3Center(self, nTeeth, tooth):
+        polar_angle = self.calcAngle(nTeeth, tooth)
+        polar_length = self.calcInnerDiameter(nTeeth)/2.0 + self.R3
+
+        return (polar_length*math.cos(polar_angle),
+                polar_length*math.sin(polar_angle))
+    # end def
+
+
+    # returns 7 sets of 3 points for drawing circles for this tooth of the
+    # profile
+    def getProfilePointSets(self, nTeeth, tooth):
+        r0x,r0y = self.calcR1Center(nTeeth, tooth, side=0)        
+        x0,y0 = self.calcR2Center(nTeeth, tooth, side=0)
+        cx,cy = self.calcR3Center(nTeeth, tooth)
+        x1,y1 = self.calcR2Center(nTeeth, tooth, side=1)        
+        r1x,r1y = self.calcR1Center(nTeeth, tooth, side=1)
+
+        # first segment
+        outer_radius = .5*self.calcOuterDiameter(nTeeth)
+        angle_increment = self.calcAngleIncrement(nTeeth)
+        polar_angle0 = self.calcAngle(nTeeth,tooth) - angle_increment/2.0
+        polar_angle1 = polar_angle0 + angle_increment/100.0
+        p0 = (outer_radius*math.cos(polar_angle0),
+              outer_radius*math.sin(polar_angle0))
+        p1 = (outer_radius*math.cos(polar_angle1),
+              outer_radius*math.sin(polar_angle1))
+        polar_angle2 = math.atan2(r0y,r0x)
+        p2 = (outer_radius*math.cos(polar_angle2),
+              outer_radius*math.sin(polar_angle2))
+        # first segment
+
+        v0x,v0y = (r0x-x0, r0y-y0)
+        v0len = vlen((v0x, v0y))
+        p4 = (self.R2*v0x/v0len + x0, self.R2*v0y/v0len + y0)
+
+
+        # to get a midpoint on the circles we take the two end points
+        # of the arc, vectorize them, add them together (which will give a
+        # result via the parallelogram rule between them, and then use it
+        # as a unit vector on the circle
+        mp = (p2[0]+p4[0] - 2*r0x,p2[1]+p4[1] - 2*r0y)
+        mplen = vlen(mp)
+        p3 = (self.R1*mp[0]/mplen + r0x, self.R1*mp[1]/mplen + r0y)
+        
+        # middle segment
+        v0x, v0y = (cx-x0, cy-y0)
+        v1x, v1y = (cx-x1, cy-y1)
+        v0len = vlen((v0x, v0y))
+        v1len = vlen((v1x, v1y))
+        
+        p6 = (v0x/v0len + x0, v0y/v0len + y0)
+        p7 = self.calcPointInnerDiameter(nTeeth, tooth)
+        p8 = (v1x/v1len + x1, v1y/v1len + y1)
+        ##
+
+        mp = (p4[0]+p6[0] - 2*x0, p4[1]+p6[1] - 2*y0)
+        mplen = vlen(mp)
+        p5 = (self.R2*mp[0]/mplen + x0, self.R2*mp[1]/mplen + y0)
+
+
+        v1x,v1y = (r1x-x1, r1y-y1)
+        v1len = vlen((v1x, v1y))
+        p10 = (self.R2*v1x/v1len + x1, self.R2*v1y/v1len + y1)
+
+        mp = (p8[0]+p10[0] - 2*x1, p8[1]+p10[1] - 2*y1)
+        mplen = vlen(mp)
+        p9 = (self.R2*mp[0]/mplen + x1, self.R2*mp[1]/mplen + y1)
+        
+        # last segment
+        polar_angle12 = math.atan2(r1y,r1x)
+        p12 = (outer_radius*math.cos(polar_angle12),
+               outer_radius*math.sin(polar_angle12))
+
+        mp = (p10[0]+p12[0] - 2*r1x,p10[1]+p12[1] - 2*r1y)
+        mplen = vlen(mp)
+        p11 = (self.R1*mp[0]/mplen + r1x, self.R1*mp[1]/mplen + r1y)
+        
+        angle_increment = self.calcAngleIncrement(nTeeth)
+        polar_angle14 = self.calcAngle(nTeeth,tooth) + angle_increment/2.0
+        polar_angle13 = polar_angle14 - angle_increment/100.0
+        p13 = (outer_radius*math.cos(polar_angle13),
+              outer_radius*math.sin(polar_angle13))
+        p14 = (outer_radius*math.cos(polar_angle14),
+              outer_radius*math.sin(polar_angle14))        
+        
+        # last segment
+        
+        return ((p0,p1,p2),
+                (p2,p3,p4),
+                (p4,p5,p6),
+                (p6,p7,p8),
+                (p8,p9,p10),
+                (p10,p11,p12),
+                (p12,p13,p14))
+    # end def
+# end class
+
+#=== 
+
+def create_sketch_profile(sketch, profile, nTeeth):
+    for i in range(0, nTeeth):
+        ps = profile.getProfilePointSets(nTeeth, i)
+        for s in ps:
+            #sketch.addGeometry(Part.Point(App.Vector(s[0][1],s[0][0],0)),
+            #False)
+            #sketch.addGeometry(Part.Point(App.Vector(s[1][1],s[1][0],0)),
+            #False)
+            #sketch.addGeometry(Part.Point(App.Vector(s[2][1],s[2][0],0)),
+            #False)
+            sketch.addGeometry(Part.Arc(App.Vector(s[0][1],s[0][0],0),
+                                        App.Vector(s[1][1],s[1][0],0),
+                                        App.Vector(s[2][1],s[2][0],0)), False)
+        # end for
+    # end for
+    FreeCAD.ActiveDocument.recompute()
+# end def
+
+import PySide
+from PySide import QtGui, QtCore
+from PySide.QtGui import *
+
+
+
+class ParameterDialog(QWidget):
+    def __init__(self, sketch):
+        super().__init__()
+        widget = self
+        self.sketch = sketch
+        self.widget = self
+        vbox = QtGui.QVBoxLayout()
+        widget.setLayout(vbox)
+        titleLabel = QtGui.QLabel("Create 2mm GT2 Pulley Profile")
+        titleLabel.setAlignment(QtCore.Qt.AlignCenter)
+        vbox.addWidget(titleLabel)
+        hboxWidget = QtGui.QWidget()
+        vbox.addWidget(hboxWidget)
+        hbox = QtGui.QHBoxLayout()
+        hboxWidget.setLayout(hbox)
+        spinLabel = QtGui.QLabel("Teeth")
+        spinLabel.setAlignment(QtCore.Qt.AlignCenter)
+        hbox.addWidget(spinLabel)
+        spinBox = QtGui.QSpinBox()
+        self.spinBox = spinBox
+        spinBox.setMinimum(12)
+        spinBox.setMaximum(120)
+        spinBox.setSingleStep(1)
+        hbox.addWidget(spinBox)
+        hboxWidget = QtGui.QWidget()
+        vbox.addWidget(hboxWidget)
+        hbox = QtGui.QHBoxLayout()
+        hboxWidget.setLayout(hbox)
+        cancelButton = QtGui.QPushButton("Cancel")
+        self.cancelButton = cancelButton
+        createButton = QtGui.QPushButton("Create")
+        self.createButton = createButton
+        hbox.addWidget(cancelButton)
+        hbox.addWidget(createButton)
+        cancelButton.clicked.connect(self.cancel_clicked)
+        createButton.clicked.connect(self.create_clicked)
+
+        
+    # end def
+
+    def keyPressEvent(self, event):
+        if (event.key() == QtCore.Qt.Key_Escape):
+            self.widget.hide()
+        elif (event.key() == QtCore.Qt.Key_Return):
+            if (self.cancelButton.hasFocus()):
+                self.cancel_clicked()
+            elif (self.createButton.hasFocus()):
+                self.create_clicked()
+            # end if
+        # end if
+    # end def
+    
+    def cancel_clicked(self):
+        self.widget.hide()
+    # end def
+
+    def create_clicked(self):
+        self.create_profile()
+        self.widget.hide()
+    # end def
+
+    def create_profile(self):
+        nTeeth = self.spinBox.value()
+        gt2 = GT2()
+        create_sketch_profile(self.sketch, gt2, nTeeth)
+    # end def
+# end class
+
+try:
+    sketch = ActiveSketch
+except:
+    print("Active sketch not found.  Canceling.")
+# end try
+
+
+pd = ParameterDialog(sketch)
+pd.show()
+
+
+
+
+
+

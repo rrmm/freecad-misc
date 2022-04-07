@@ -1,0 +1,65 @@
+# -*- coding: utf-8 -*-
+
+import FreeCAD
+
+import PySide
+from PySide import QtGui, QtCore
+from PySide.QtGui import *
+
+import Mesh
+import MeshPartGui, FreeCADGui
+import MeshPart
+import Mesh, Part, PartGui
+
+
+import os.path
+
+#
+# 2022 (C) RM
+# Convenience macro to create and save a mesh to stl for printing.
+#
+
+
+
+# assumes selection is non-zero len
+def do_export_mesh(doc, selection):
+	
+	initial_path = os.path.dirname(doc.FileName)
+	
+	# use the selected part
+	__part__ = selection[0]
+	__shape__ = __part__.Shape
+	clean_label = __part__.Label
+	
+	clean_label = clean_label.translate(str.maketrans("# /*?!", "______"))
+	initial_filename = os.path.join(initial_path, clean_label+"_mesh.stl")
+	save_filename, save_filter = QFileDialog.getSaveFileName(None, "Export mesh", initial_filename, "*.stl")
+	
+	
+	if save_filename != "":
+		__mesh__ = doc.addObject("Mesh::Feature","Mesh")
+		__mesh__.Label =__part__.Label+" [Mesh]"	
+		__mesh__.Mesh = MeshPart.meshFromShape(Shape=__shape__, 
+					   					  LinearDeflection=0.1, AngularDeflection=0.174533, 
+										  Relative=False)
+		Mesh.export([__mesh__], save_filename)
+		del __mesh__ 	
+	# end if
+	del __part__, __shape__
+# end def 
+
+
+
+# use the current document
+__doc__ = FreeCAD.ActiveDocument
+selection = FreeCADGui.Selection.getSelection() 	
+
+if (len(selection) > 0):		
+	do_export_mesh(__doc__, selection)
+else:
+	print("Export Mesh: No selection to export.")
+# end if
+
+
+del __doc__
+
